@@ -7,6 +7,10 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import com.google.gson.ExclusionStrategy;
+import com.google.gson.FieldAttributes;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.HttpMessageConverter;
@@ -42,26 +46,40 @@ public class ControllerReurnHandler implements ResponseBodyAdvice<Object> // 这
             JsonFilterDesensitized.ClassFieldFilter[] classFieldFilters = paramter.getMethodAnnotation(JsonFilterDesensitized.class).value();
             if (classFieldFilters.length != 0)
             {
-                // 这边进行字段过滤拦截了0
-                JsonFilterSerializer serializer = new JsonFilterSerializer();
-                ObjectMapper mapper = serializer.doFilter(classFieldFilters);
-                return mapper.valueToTree(returnObject);
+                // Jackson 过滤
+                {
+                    // 这边进行字段过滤拦截
+//                JackSonFilterSerializer serializer = new JackSonFilterSerializer();
+//                ObjectMapper mapper = serializer.doFilter(classFieldFilters);
+//                return mapper.valueToTree(returnObject);
+
+                }
+
+                // Gson 过滤
+                {
+                    Gson gson = gsonFilter(classFieldFilters);
+                    return gson.toJson(returnObject);
+                }
             }
         }
         return returnObject;
     }
 
     @JsonIgnoreProperties
-    private static class JsonFilterSerializer
+    private static class JackSonFilterSerializer
     {
         private static final String FILTER_INCLUDE = "FILTER_INCLUDE";
         private static final String FILTER_EXCLUDE = "FILTER_EXCLUDE";
 
         @JsonFilter(FILTER_EXCLUDE)
-        interface FilterExclude { }
+        interface FilterExclude
+        {
+        }
 
         @JsonFilter(FILTER_INCLUDE)
-        interface FilterInclude { }
+        interface FilterInclude
+        {
+        }
 
         public ObjectMapper doFilter(JsonFilterDesensitized.ClassFieldFilter[] classFieldFilters)
         {
@@ -93,5 +111,56 @@ public class ControllerReurnHandler implements ResponseBodyAdvice<Object> // 这
             mapper.setFilterProvider(filterProvider);
             return mapper;
         }
+    }
+
+    private static Gson gsonFilter(JsonFilterDesensitized.ClassFieldFilter[] classFieldFilters)
+    {
+        return new GsonBuilder().addSerializationExclusionStrategy(new ExclusionStrategy()
+        {
+            @Override
+            public boolean shouldSkipField(FieldAttributes fieldAttributes)
+            {
+                Class<?> declaringClass = fieldAttributes.getDeclaringClass();
+                String fieldName = fieldAttributes.getName();
+
+                for (JsonFilterDesensitized.ClassFieldFilter classFieldFilter : classFieldFilters)
+                {
+                    if (classFieldFilter.type() == declaringClass)
+                    {
+                        if (classFieldFilter.exclude().length != 0)
+                        {
+                            // exclude
+                            for (String excludeFieldName : classFieldFilter.exclude())
+                            {
+                                if (fieldName.equals(excludeFieldName))
+                                    return true;
+                            }
+                        } else if (classFieldFilter.include().length != 0)
+                        {
+                            // include
+                            boolean isFilter = true;
+                            for (String includeFieldName : classFieldFilter.include())
+                            {
+                                if (fieldName.equals(includeFieldName))
+                                {
+                                    isFilter = false;
+                                    break;
+                                }
+                            }
+
+                            return isFilter;
+                        } else
+                            return false;
+                    }
+                }
+                return false;
+            }
+
+            @Override
+            public boolean shouldSkipClass(Class<?> aClass)
+            {
+                return false;
+            }
+        }).create();
     }
 }
